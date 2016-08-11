@@ -10,7 +10,6 @@ package com.whizzosoftware.hobson.simplisafe;
 import com.whizzosoftware.hobson.api.plugin.http.Cookie;
 
 import java.util.Collection;
-import java.util.List;
 
 /**
  * Represents a SimpliSafe user session.
@@ -22,7 +21,7 @@ public class SimpliSafeSession {
     private String uid;
     private Collection<Cookie> cookies;
 
-    public SimpliSafeSession(String session, String uid, List<Cookie> cookies) {
+    public SimpliSafeSession(String session, String uid, Collection<Cookie> cookies) {
         this.session = session;
         this.uid = uid;
         this.cookies = cookies;
@@ -38,13 +37,5 @@ public class SimpliSafeSession {
 
     public Collection<Cookie> getCookies() {
         return cookies;
-    }
-
-    public String getCookieString() {
-        StringBuilder sb = new StringBuilder();
-        for (Cookie c : cookies) {
-            sb.append(c.getName()).append("=").append(c.getValue()).append("; ");
-        }
-        return sb.toString();
     }
 }

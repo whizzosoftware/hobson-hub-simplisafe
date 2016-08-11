@@ -45,16 +45,31 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         super(pluginId);
     }
 
+    /**
+     * Returns the plugin name.
+     *
+     * @return a String
+     */
     @Override
     public String getName() {
         return "SimpliSafe";
     }
 
+    /**
+     * Indicates how often the onRefresh method will be called.
+     *
+     * @return number of seconds
+     */
     @Override
     public long getRefreshInterval() {
-        return 10;
+        return 10; // seconds
     }
 
+    /**
+     * Returns the list of supported plugin configuration properties.
+     *
+     * @return a TypedProperty[] (or null if no properties are supported)
+     */
     @Override
     protected TypedProperty[] createSupportedProperties() {
         return new TypedProperty[] {
@@ -63,63 +78,115 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         };
     }
 
+    /**
+     * Called when the runtime starts the plugin.
+     *
+     * @param config the current plugin configuration
+     */
     @Override
     public void onStartup(PropertyContainer config) {
         logger.debug("SimpliSafe plugin is starting");
+        // attempt to process in case the configuration is already valid
         processConfiguration(config);
     }
 
+    /**
+     * Called when the runtime is shutting down the plugin.
+     */
     @Override
     public void onShutdown() {
         logger.debug("SimpliSafe plugin has shut down");
     }
 
+    /**
+     * Called by the runtime any time the plugin's configuration changes.
+     *
+     * @param config the new configuration
+     */
     @Override
     public void onPluginConfigurationUpdate(PropertyContainer config) {
         processConfiguration(config);
     }
 
+    /**
+     * Called by the runtime every getRefreshInterval() seconds to allow the plugin to update device status
+     * and perform housekeeping.
+     */
     @Override
     public void onRefresh() {
-        // if there's not currently a session, perform login
-        if (!hasSession()) {
+        // if credentials are set but there's no active session, attempt to login
+        if (hasCredentials() && !hasSession()) {
             performLoginRequest();
-        // if no base stations have been found, do a location query
-        } else if (!hasBaseStations()) {
+        // if there's a valid session but no base stations have been found, do a location query
+        } else if (hasSession() && !hasBaseStations()) {
             performLocationsRequest();
-        // otherwise, allow all known base stations to update their state
-        } else {
+        // otherwise, if there's a valid session, give all known base stations an opportunity to update their state
+        } else if (hasSession()) {
             for (SimpliSafeBaseStation c : baseStationMap.values()) {
                 c.onRefresh();
             }
         }
     }
 
+    /**
+     * Called by the runtime when an HTTP response is received.
+     *
+     * @param statusCode the status code of the response
+     * @param headers the headers in the response (or null if there were none)
+     * @param cookies any cookies that were found in the response
+     * @param response the response body
+     * @param context the context object associated with the request
+     */
     @Override
-    protected void onHttpResponse(int statusCode, Map<String, List<String>> headers, List<Cookie> cookies, String response, Object context) {
-        if (statusCode == 200) {
-            String ctx = (String)context;
-            if (CTX_LOGIN.equals(ctx)) {
-                processLoginResponse(cookies, parseJSON(response));
-            } else if (CTX_LOCATIONS.equals(ctx)) {
-                processLocationsResponse(parseJSON(response));
-            } else if (ctx.startsWith(CTX_GET_STATE)) {
-                processGetStateResponse(ctx.substring(CTX_GET_STATE.length()), parseJSON(response));
-            } else if (ctx.startsWith(CTX_SET_STATE)) {
-                processSetStateResponse(ctx.substring(CTX_SET_STATE.length()), parseJSON(response));
-            } else {
-                logger.error("Received unrecognized response type: {}", context);
-            }
-        } else {
-            logger.error("Received unexpected status code for {}: {}", context, statusCode);
+    protected void onHttpResponse(int statusCode, Map<String, List<String>> headers, Collection<Cookie> cookies, String response, Object context) {
+        String ctx = (String)context;
+
+        logger.trace("Received HTTP response ({}): {}", statusCode, response);
+
+        switch (statusCode) {
+            case 200:
+                if (CTX_LOGIN.equals(ctx)) {
+                    processLoginResponse(cookies, parseJSON(response));
+                } else if (CTX_LOCATIONS.equals(ctx)) {
+                    processLocationsResponse(parseJSON(response));
+                } else if (ctx.startsWith(CTX_GET_STATE)) {
+                    processGetStateResponse(ctx.substring(CTX_GET_STATE.length()), parseJSON(response));
+                } else if (ctx.startsWith(CTX_SET_STATE)) {
+                    processSetStateResponse(ctx.substring(CTX_SET_STATE.length()), parseJSON(response));
+                } else {
+                    logger.error("Received unrecognized response type: {}", context);
+                }
+                break;
+            case 401:
+                if (CTX_LOGIN.equals(ctx)) {
+                    invalidateCredentials();
+                } else {
+                    logger.error("Detected invalid session; will login again");
+                    clearSession();
+                    onRefresh();
+                }
+                break;
+            default:
+                logger.error("Received unexpected status code for {}: {}", context, statusCode);
         }
     }
 
+    /**
+     * Called by the runtime when an HTTP request failure is detected.
+     *
+     * @param cause the cause of the failure
+     * @param context the context object associated with the request
+     */
     @Override
     protected void onHttpRequestFailure(Throwable cause, Object context) {
-        logger.error("Request failure for: " + context, cause);
+        logger.error("Request failure for " + context, cause);
     }
 
+    /**
+     * Processes a configuration object. This will be called from onStartup() or onPluginConfigurationUpdate().
+     *
+     * @param config the configuration object to process
+     */
     protected void processConfiguration(PropertyContainer config) {
         String u = config.getStringPropertyValue("username");
         String p = config.getStringPropertyValue("password");
@@ -135,15 +202,20 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         }
     }
 
+    /**
+     * Send a login request to SimpliSafe.
+     */
     protected void performLoginRequest() {
         if (username != null && password != null) {
             try {
-                String entity = "name=" + username + "&pass=" + password + "&device_name=SimpliSafe&device_uuid=" + uuid + "&version=1200&no_persist=1&XDEBUG_SESSION_START=session_name";
-                logger.debug("Sending login request: {}", entity);
+                String path = BASE_URL + "/mobile/login";
+                String body = "name=" + username + "&pass=" + password + "&device_name=SimpliSafe&device_uuid=" + uuid + "&version=1200&no_persist=1&XDEBUG_SESSION_START=session_name";
+                logger.debug("Sending login request to {}: {}", path, body);
                 sendHttpPostRequest(
-                    new URI(BASE_URL + "/mobile/login"),
+                    new URI(path),
                     null,
-                    entity.getBytes(),
+                    null,
+                    body.getBytes(),
                     CTX_LOGIN
                 );
             } catch (URISyntaxException e) {
@@ -154,24 +226,47 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         }
     }
 
-    protected void processLoginResponse(List<Cookie> cookies, JSONObject json) {
-        if (json.getInt("return_code") == 1) {
-            session = new SimpliSafeSession(json.getString("session"), json.getString("uid"), cookies);
-            logger.debug("Received a successful login for user: {}", json.getString("username"));
-            setStatus(PluginStatus.running());
-            onRefresh(); // force an update
+    /**
+     * Processes a login response from SimpliSafe.
+     *
+     * @param cookies any cookies found in the response
+     * @param json the JSON-formatted response body
+     */
+    protected void processLoginResponse(Collection<Cookie> cookies, JSONObject json) {
+        logger.trace("Received login response: {} with cookies {}", json, cookies);
+        if (json.has("return_code")) {
+            switch (json.getInt("return_code")) {
+                case 0:
+                    invalidateCredentials();
+                    break;
+                case 1:
+                    session = new SimpliSafeSession(json.getString("session"), json.getString("uid"), cookies);
+                    logger.debug("Received a successful login for user: {}", json.getString("username"));
+                    setStatus(PluginStatus.running());
+                    onRefresh(); // force an update
+                    break;
+                default:
+                    logger.error("Received an unexpected login return_code: {}", json.getInt("return_code"));
+            }
         } else {
-            logger.error("Received an unexpected return_code: {}", json.getInt("return_code"));
+            logger.error("No return_code found in login response: {}", json);
         }
     }
 
+    /**
+     * Sends a request for a list of locations to SimpliSafe.
+     */
     protected void performLocationsRequest() {
         if (hasSession()) {
             try {
+                String path = BASE_URL + "/mobile/" + session.getUid() + "/locations";
+                String body = "no_persist=0&XDEBUG_SESSION_START=session_name";
+                logger.debug("Sending locations request to {}: {}", path, body);
                 sendHttpPostRequest(
-                    new URI(BASE_URL + "/mobile/" + session.getUid() + "/locations"),
-                    Collections.singletonMap("Cookie", session.getCookieString()),
-                    ("no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
+                    new URI(path),
+                    null,
+                    session.getCookies(),
+                    body.getBytes(),
                     CTX_LOCATIONS
                 );
             } catch (URISyntaxException e) {
@@ -182,11 +277,18 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         }
     }
 
+    /**
+     * Processes a locations response from SimpliSafe.
+     *
+     * @param json the JSON-formatted response body
+     */
     protected void processLocationsResponse(JSONObject json) {
+        logger.trace("Received locations response: {}", json);
         JSONObject locations = json.getJSONObject("locations");
         for (Object o : locations.keySet()) {
             String location = (String)o;
             if (!baseStationMap.containsKey(location)) {
+                // we found a new base station
                 logger.debug("Publishing base station: {}", location);
                 SimpliSafeBaseStation ssc = new SimpliSafeBaseStation(this, location, this);
                 publishDevice(ssc);
@@ -196,6 +298,11 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         onRefresh(); // force an update
     }
 
+    /**
+     * Sends a request for location state to SimpliSafe.
+     *
+     * @param location the location for which state is being requested
+     */
     @Override
     public void performGetState(String location) {
         if (hasSession() && location != null) {
@@ -203,7 +310,8 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
             try {
                 sendHttpPostRequest(
                         new URI(BASE_URL + "/mobile/" + session.getUid() + "/sid/" + location + "/get-state"),
-                        Collections.singletonMap("Cookie", session.getCookieString()),
+                        null,
+                        session.getCookies(),
                         ("no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
                         CTX_GET_STATE + location
                 );
@@ -215,6 +323,28 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         }
     }
 
+    /**
+     * Processes a get state response from SimpliSafe.
+     *
+     * @param location the location the response is associated with
+     * @param json the JSON-formatted response body
+     */
+    protected void processGetStateResponse(String location, JSONObject json) {
+        logger.trace("Received get state response: {}", json);
+        SimpliSafeBaseStation c = baseStationMap.get(location);
+        if (c != null) {
+            c.onState(json);
+        } else {
+            logger.error("Received state for unknown base station: {}", location);
+        }
+    }
+
+    /**
+     * Sends a request to set location state to SimpliSafe.
+     *
+     * @param location the location for which state is being set
+     * @param state the new state value (off, home, away)
+     */
     @Override
     public void performSetState(String location, String state) {
         if (hasSession() && location != null) {
@@ -222,7 +352,8 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
             try {
                 sendHttpPostRequest(
                         new URI(BASE_URL + "/mobile/" + session.getUid() + "/sid/" + location + "/set-state"),
-                        Collections.singletonMap("Cookie", session.getCookieString()),
+                        null,
+                        session.getCookies(),
                         ("state=" + state + "&mobile=1&no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
                         CTX_SET_STATE + location
                 );
@@ -234,18 +365,20 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         }
     }
 
-    protected void processGetStateResponse(String location, JSONObject json) {
-        SimpliSafeBaseStation c = baseStationMap.get(location);
-        if (c != null) {
-            c.onState(json);
-        } else {
-            logger.error("Received state for unknown base station: {}", location);
-        }
+    /**
+     * Processes a set state response from SimpliSafe.
+     *
+     * @param location the location the response is associated with
+     * @param json the JSON-formatted response body
+     */
+    protected void processSetStateResponse(String location, JSONObject json) {
+        logger.trace("Received set state response for {}: {}", location, json);
+        // the response body format is identical to "get state" so just call its process method to handle it
+        processGetStateResponse(location, json);
     }
 
-    protected void processSetStateResponse(String location, JSONObject json) {
-        logger.debug("Successfully set state for {}", location);
-        processGetStateResponse(location, json);
+    private boolean hasCredentials() {
+        return (username != null && password != null);
     }
 
     private boolean hasSession() {
@@ -254,6 +387,13 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
 
     private void clearSession() {
         session = null;
+    }
+
+    private void invalidateCredentials() {
+        logger.error("Configured credentials appear to be invalid; resetting them");
+        username = null;
+        password = null;
+        setStatus(PluginStatus.failed("Username and/or password are invalid"));
     }
 
     private boolean hasBaseStations() {

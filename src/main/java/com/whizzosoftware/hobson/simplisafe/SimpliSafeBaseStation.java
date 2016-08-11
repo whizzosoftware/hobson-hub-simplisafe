@@ -27,8 +27,19 @@ import org.slf4j.LoggerFactory;
 public class SimpliSafeBaseStation extends AbstractHobsonDevice {
     private static final Logger logger = LoggerFactory.getLogger(SimpliSafeBaseStation.class);
 
+    public static final int STATE_OFF = 2;
+    public static final int STATE_HOME = 4;
+    public static final int STATE_AWAY = 5;
+
     private SimpliSafeClient client;
 
+    /**
+     * Constructor.
+     *
+     * @param plugin the plugin associated with this device
+     * @param id the device ID
+     * @param client a client to use for making SimpliSafe requests
+     */
     public SimpliSafeBaseStation(HobsonPlugin plugin, String id, SimpliSafeClient client) {
         super(plugin, id);
         this.client = client;
@@ -46,6 +57,11 @@ public class SimpliSafeBaseStation extends AbstractHobsonDevice {
     }
 
     @Override
+    public String getPreferredVariableName() {
+        return VariableConstants.ARMED;
+    }
+
+    @Override
     public void onStartup(PropertyContainer config) {
         super.onStartup(config);
 
@@ -54,27 +70,41 @@ public class SimpliSafeBaseStation extends AbstractHobsonDevice {
 
     @Override
     public void onShutdown() {
-
     }
 
+    /**
+     * Called by the plugin to allow this device to update its state.
+     */
     public void onRefresh() {
         client.performGetState(getContext().getDeviceId());
     }
 
+    /**
+     * Called by the plugin when a state response for this device is received.
+     * @param json
+     */
     public void onState(JSONObject json) {
         logger.trace("{} received state JSON: {}", getContext().getDeviceId(), json);
         if (json.has("response_code")) {
             int code = json.getInt("response_code");
-            fireVariableUpdateNotification(VariableConstants.ARMED, (code == 3));
+            fireVariableUpdateNotification(VariableConstants.ARMED, (code == STATE_AWAY));
         } else {
             logger.error("Received unexpected get status response: {}", json);
         }
     }
 
+    /**
+     * Called by the runtime when a request to set a variable for this device is received.
+     *
+     * @param name the variable name
+     * @param value the new variable value
+     */
     @Override
     public void onSetVariable(String name, Object value) {
         logger.debug("Variable {} changed to {}", name, value);
+        // the only variable we currently care about is "ARMED"
         if (VariableConstants.ARMED.equals(name) && value instanceof Boolean) {
+            // send the request to SimpliSafe to change the state
             client.performSetState(getContext().getDeviceId(), ((Boolean)value) ? "away" : "home");
         }
     }
