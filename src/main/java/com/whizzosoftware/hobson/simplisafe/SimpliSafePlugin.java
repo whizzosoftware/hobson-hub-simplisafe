@@ -10,6 +10,8 @@ package com.whizzosoftware.hobson.simplisafe;
 import com.whizzosoftware.hobson.api.plugin.PluginStatus;
 import com.whizzosoftware.hobson.api.plugin.http.AbstractHttpClientPlugin;
 import com.whizzosoftware.hobson.api.plugin.http.Cookie;
+import com.whizzosoftware.hobson.api.plugin.http.HttpRequest;
+import com.whizzosoftware.hobson.api.plugin.http.HttpResponse;
 import com.whizzosoftware.hobson.api.property.PropertyContainer;
 import com.whizzosoftware.hobson.api.property.TypedProperty;
 import org.json.JSONObject;
@@ -17,6 +19,7 @@ import org.json.JSONTokener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
@@ -29,7 +32,7 @@ import java.util.*;
 public class SimpliSafePlugin extends AbstractHttpClientPlugin implements SimpliSafeClient {
     private static final Logger logger = LoggerFactory.getLogger(SimpliSafePlugin.class);
 
-    private static final String BASE_URL = "https://simplisafe.com";
+    private static final String BASE_URL = "http://localhost:9999";
     private static final String CTX_LOGIN = "login";
     private static final String CTX_LOCATIONS = "locations";
     private static final String CTX_GET_STATE = "gstate:";
@@ -131,43 +134,44 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
     /**
      * Called by the runtime when an HTTP response is received.
      *
-     * @param statusCode the status code of the response
-     * @param headers the headers in the response (or null if there were none)
-     * @param cookies any cookies that were found in the response
-     * @param response the response body
+     * @param response the response
      * @param context the context object associated with the request
      */
     @Override
-    protected void onHttpResponse(int statusCode, Map<String, List<String>> headers, Collection<Cookie> cookies, String response, Object context) {
+    public void onHttpResponse(HttpResponse response, Object context) {
         String ctx = (String)context;
 
-        logger.trace("Received HTTP response ({}): {}", statusCode, response);
-
-        switch (statusCode) {
-            case 200:
-                if (CTX_LOGIN.equals(ctx)) {
-                    processLoginResponse(cookies, parseJSON(response));
-                } else if (CTX_LOCATIONS.equals(ctx)) {
-                    processLocationsResponse(parseJSON(response));
-                } else if (ctx.startsWith(CTX_GET_STATE)) {
-                    processGetStateResponse(ctx.substring(CTX_GET_STATE.length()), parseJSON(response));
-                } else if (ctx.startsWith(CTX_SET_STATE)) {
-                    processSetStateResponse(ctx.substring(CTX_SET_STATE.length()), parseJSON(response));
-                } else {
-                    logger.error("Received unrecognized response type: {}", context);
-                }
-                break;
-            case 401:
-                if (CTX_LOGIN.equals(ctx)) {
-                    invalidateCredentials();
-                } else {
-                    logger.error("Detected invalid session; will login again");
-                    clearSession();
-                    onRefresh();
-                }
-                break;
-            default:
-                logger.error("Received unexpected status code for {}: {}", context, statusCode);
+        try {
+            String s = response.getBody();
+            logger.trace("Received HTTP response ({}): {}", response.getStatusCode(), s);
+            switch (response.getStatusCode()) {
+                case 200:
+                    if (CTX_LOGIN.equals(ctx)) {
+                        processLoginResponse(response.getCookies(), parseJSON(s));
+                    } else if (CTX_LOCATIONS.equals(ctx)) {
+                        processLocationsResponse(parseJSON(s));
+                    } else if (ctx.startsWith(CTX_GET_STATE)) {
+                        processGetStateResponse(ctx.substring(CTX_GET_STATE.length()), parseJSON(s));
+                    } else if (ctx.startsWith(CTX_SET_STATE)) {
+                        processSetStateResponse(ctx.substring(CTX_SET_STATE.length()), parseJSON(s));
+                    } else {
+                        logger.error("Received unrecognized response type: {}", context);
+                    }
+                    break;
+                case 401:
+                    if (CTX_LOGIN.equals(ctx)) {
+                        invalidateCredentials();
+                    } else {
+                        logger.error("Detected invalid session; will login again");
+                        clearSession();
+                        onRefresh();
+                    }
+                    break;
+                default:
+                    logger.error("Received unexpected status code for {}: {}", context, response.getStatusCode());
+            }
+        } catch (IOException e) {
+            logger.error("Error processing HTTP response", e);
         }
     }
 
@@ -178,7 +182,7 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
      * @param context the context object associated with the request
      */
     @Override
-    protected void onHttpRequestFailure(Throwable cause, Object context) {
+    public void onHttpRequestFailure(Throwable cause, Object context) {
         logger.error("Request failure for " + context, cause);
     }
 
@@ -211,8 +215,9 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
                 String path = BASE_URL + "/mobile/login";
                 String body = "name=" + username + "&pass=" + password + "&device_name=SimpliSafe&device_uuid=" + uuid + "&version=1200&no_persist=1&XDEBUG_SESSION_START=session_name";
                 logger.debug("Sending login request to {}: {}", path, body);
-                sendHttpPostRequest(
+                sendHttpRequest(
                     new URI(path),
+                    HttpRequest.Method.POST,
                     null,
                     null,
                     body.getBytes(),
@@ -262,8 +267,9 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
                 String path = BASE_URL + "/mobile/" + session.getUid() + "/locations";
                 String body = "no_persist=0&XDEBUG_SESSION_START=session_name";
                 logger.debug("Sending locations request to {}: {}", path, body);
-                sendHttpPostRequest(
+                sendHttpRequest(
                     new URI(path),
+                    HttpRequest.Method.POST,
                     null,
                     session.getCookies(),
                     body.getBytes(),
@@ -308,12 +314,13 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         if (hasSession() && location != null) {
             logger.trace("Performing get state for {}", location);
             try {
-                sendHttpPostRequest(
-                        new URI(BASE_URL + "/mobile/" + session.getUid() + "/sid/" + location + "/get-state"),
-                        null,
-                        session.getCookies(),
-                        ("no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
-                        CTX_GET_STATE + location
+                sendHttpRequest(
+                    new URI(BASE_URL + "/mobile/" + session.getUid() + "/sid/" + location + "/get-state"),
+                    HttpRequest.Method.POST,
+                    null,
+                    session.getCookies(),
+                    ("no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
+                    CTX_GET_STATE + location
                 );
             } catch (URISyntaxException e) {
                 logger.error("Error performing get state query", e);
@@ -350,12 +357,13 @@ public class SimpliSafePlugin extends AbstractHttpClientPlugin implements Simpli
         if (hasSession() && location != null) {
             logger.debug("Performing set state: {}, {}", location, state);
             try {
-                sendHttpPostRequest(
-                        new URI(BASE_URL + "/mobile/" + session.getUid() + "/sid/" + location + "/set-state"),
-                        null,
-                        session.getCookies(),
-                        ("state=" + state + "&mobile=1&no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
-                        CTX_SET_STATE + location
+                sendHttpRequest(
+                    new URI(BASE_URL + "/mobile/" + session.getUid() + "/sid/" + location + "/set-state"),
+                    HttpRequest.Method.POST,
+                    null,
+                    session.getCookies(),
+                    ("state=" + state + "&mobile=1&no_persist=0&XDEBUG_SESSION_START=session_name").getBytes(),
+                    CTX_SET_STATE + location
                 );
             } catch (URISyntaxException e) {
                 logger.error("Error performing get state query", e);
