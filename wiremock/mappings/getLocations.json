@@ -1,0 +1,35 @@
+{
+	"request": {
+		"method": "POST",
+		"url": "/mobile/99999/locations"
+	},
+	"response": {
+		"status": 200,
+		"jsonBody": {
+			"num_locations": 2,
+			"locations": {
+				"555555": {
+					"street1": "1 Main Street",
+					"street2": "",
+					"city": "PopularTown",
+					"state": "ZZ",
+					"postal_code": "00000",
+					"s_status": "20",
+					"system_state": "Home"
+				},
+				"444444": {
+					"street1": "1 Main Street",
+					"street2": "",
+					"city": "PopularTown",
+					"state": "ZZ",
+					"postal_code": "00000",
+					"s_status": "20",
+					"system_state": "Home"
+				}
+			}
+		},
+		"headers": {
+			"Content-Type": "application/json"
+		}
+	}
+}

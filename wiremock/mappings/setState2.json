@@ -1,0 +1,15 @@
+{
+	"request": {
+		"method": "POST",
+		"url": "/mobile/99999/sid/444444/set-state"
+	},
+	"response": {
+		"status": 200,
+		"jsonBody": {
+			"response_code": 2
+		},
+		"headers": {
+			"Content-Type": "application/json"
+		}
+	}
+}

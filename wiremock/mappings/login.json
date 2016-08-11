@@ -1,0 +1,24 @@
+{
+	"request": {
+		"method": "POST",
+		"url": "/mobile/login"
+	},
+	"response": {
+		"status": 200,
+		"jsonBody": {
+			"return_code": 1,
+			"session": "99999999999",
+			"uid": "99999",
+			"username": "hello@example.com"
+		},
+		"headers": {
+			"Content-Type": "application/json",
+			"Set-Cookie": [
+				"vid=6921507; expires=1410496182",
+				"sid=b20a9ed63d551c237c566731ec65f139; expires=1410496182",
+				"SESS1b361eg11731czc1408a3ba712e086e9=f21z7fa23d281x336d232014fd33e112; expires=1410496182",
+				"DRUPAL_ID=89102; expires=1410496182"
+			]
+		}
+	}
+}
