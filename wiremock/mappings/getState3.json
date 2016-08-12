@@ -1,9 +1,9 @@
 {
 	"scenarioName": "AlarmState",
-	"newScenarioState": "Armed",
+	"requiredScenarioState": "Armed",
 	"request": {
 		"method": "POST",
-		"url": "/mobile/99999/sid/444444/set-state"
+		"url": "/mobile/99999/sid/444444/get-state"
 	},
 	"response": {
 		"status": 200,

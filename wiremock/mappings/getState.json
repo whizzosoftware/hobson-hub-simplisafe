@@ -6,7 +6,7 @@
 	"response": {
 		"status": 200,
 		"jsonBody": {
-			"response_code": 2
+			"response_code": 4
 		},
 		"headers": {
 			"Content-Type": "application/json"
