@@ -32,7 +32,7 @@ import java.util.*;
 public class SimpliSafePlugin extends AbstractHttpClientPlugin implements SimpliSafeClient {
     private static final Logger logger = LoggerFactory.getLogger(SimpliSafePlugin.class);
 
-    private static final String BASE_URL = "http://localhost:9999";
+    private static final String BASE_URL = "https://simplisafe.com";
     private static final String CTX_LOGIN = "login";
     private static final String CTX_LOCATIONS = "locations";
     private static final String CTX_GET_STATE = "gstate:";
